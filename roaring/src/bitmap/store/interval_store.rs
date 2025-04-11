@@ -275,6 +275,219 @@ impl IntervalStore {
             })
             .is_ok()
     }
+
+    pub fn remove_range(&mut self, range: RangeInclusive<u16>) -> u64 {
+        let interval = Interval { start: *range.start(), end: *range.end() };
+        let first_interval =
+            self.0.binary_search_by(|iv| cmp_index_interval(interval.start, *iv).reverse());
+        let end_interval =
+            self.0.binary_search_by(|iv| cmp_index_interval(interval.end, *iv).reverse());
+        match (first_interval, end_interval) {
+            // both start and end index are contained in intervals
+            (Ok(begin), Ok(end)) => {
+
+                // let (to_drain, interval_id) =
+                if self.0[begin].start == interval.start && self.0[end].end == interval.end {
+                    let count = self.0[begin..=end].iter().map(|f| f.run_len()).sum();
+                    self.0.drain(begin..=end);
+                    count
+                } else if self.0[begin].start == interval.start {
+                    let count = dbg!(self.0[begin..end].iter().map(|f| f.run_len()).sum::<u64>()) +
+                        u64::from(Interval::new(self.0[end].start, interval.end).run_len());
+                    self.0[end].start = interval.end + 1;
+                    self.0.drain(begin..end);
+                    // (begin..end, Some(end))
+                    count
+                } else if self.0[end].end == interval.end {
+                    todo!()
+                    // (begin + 1..end + 1, Some(begin))
+                } else {
+                    todo!()
+                    // (begin + 1..end, None)
+                }
+                // let drained_amount: u64 = if !to_drain.is_empty() {
+                //     self.0[begin + 1..end].iter().map(|f| f.run_len()).sum()
+                // } else {
+                //     0
+                // };
+                // let count = if begin != end {
+                //     u64::from(self.0[begin].end - interval.start) +
+                //     u64::from(interval.end - self.0[end].start) + drained_amount
+                // } else {
+                //     interval.run_len()
+                // };
+                // self.0[begin].end = interval.start;
+                // if begin == end {
+                //     if !interval.end == self.0[begin].end {
+                //         let new_interval = Interval::new(interval.end, self.0[begin].end);
+                //         self.0.insert(begin + 1, new_interval);
+                //     }
+                // } else {
+                //     self.0[end].start = interval.end;
+                // }
+                // if !to_drain.is_empty() {
+                //     self.0.drain(to_drain);
+                // }
+                // count
+            }
+            // start index is contained in an interval,
+            // end index is not
+            (Ok(begin), Err(to_insert)) => {
+                let (new_end, drain_id) =
+                    // if there is a next interval, check if these intervals are consecutive
+                    if to_insert < self.0.len() && self.0[to_insert].start - 1 == interval.end {
+                        // The intervals are consecutive! Adjust new end of interval, and how far
+                        // we drain
+                        (self.0[to_insert].start, to_insert + 1)
+                    } else {
+                        (interval.end, to_insert)
+                    };
+                let drained_amount: u64 =
+                    self.0[begin + 1..to_insert].iter().map(|f| f.run_len()).sum();
+                let amount =
+                    Interval::new(self.0[begin].end + 1, interval.end).run_len() - drained_amount;
+                self.0[begin].end = new_end;
+                self.0.drain(begin + 1..drain_id);
+                amount
+            }
+            // there is no interval that contains the start index,
+            // there is an interval that contains the end index,
+            (Err(to_begin), Ok(end)) => {
+                let consecutive_begin =
+                    to_begin > 0 && self.0[to_begin - 1].end + 1 == interval.start;
+                let (drain_id, interval_id) =
+                    // check if begin interval is consecutive with new interval
+                    if consecutive_begin {
+                        // The intervals are consecutive! Adjust how much we remove, and how
+                        // which interval we end up keeping
+                        (end + 1, to_begin - 1)
+                    } else {
+                        (end, end)
+                    };
+                let drained_amount: u64 = self.0[to_begin..end].iter().map(|f| f.run_len()).sum();
+                let amount =
+                    Interval::new(interval.start, self.0[end].start - 1).run_len() - drained_amount;
+                if consecutive_begin {
+                    self.0[interval_id].end = self.0[end].end;
+                } else {
+                    self.0[interval_id].start = interval.start;
+                }
+                self.0.drain(to_begin..drain_id);
+                amount
+            }
+            (Err(to_begin), Err(to_end)) => {
+                if self.0.is_empty() {
+                    self.0.insert(to_begin, interval);
+                    return interval.run_len();
+                }
+                let consec_begin = to_begin > 0 && self.0[to_begin - 1].end + 1 == interval.start;
+                let conces_end = to_end < self.0.len()
+                    && self.0[to_end]
+                        .start
+                        .checked_sub(1)
+                        .map(|f| f == interval.end)
+                        .unwrap_or(false);
+                if !consec_begin && !conces_end && to_begin == to_end {
+                    // an arbitrary range with no consecutive intervals, unable to reuse existing interval
+                    self.0.insert(to_begin, interval);
+                    return interval.run_len();
+                }
+                let (drain_id_begin, drain_id_end, interval_id) = {
+                    if conces_end && consec_begin {
+                        // Both intervals are consecutive! Adjust how much we remove, and
+                        // which interval we end up keeping
+                        //
+                        // keep begin interval and remove end
+                        // NOTE: to_begin - 1 since the interval we actually care about is one to
+                        // the left e.g.:
+                        // [3..=5, 9..=20] add 6..=8 ->
+                        // to_begin = 1
+                        // to_end = 1
+                        (to_begin, to_end + 1, to_begin - 1)
+                    } else if consec_begin {
+                        // Remove end interval, keep begin to overwrite
+                        //
+                        // NOTE: to_begin - 1 since the interval we actually care about is one to
+                        // the left e.g.:
+                        // [3..=5] add 6..=8 ->
+                        // to_begin = 1
+                        // to_end = 1
+                        (to_begin, to_end, to_begin - 1)
+                    } else if conces_end {
+                        // Remove begin interval, keep end to overwrite
+                        //
+                        // NOTE: no -1 since the interval we actually care about is one to
+                        // the left e.g.:
+                        // [8..=10] add 6..=7 ->
+                        // to_begin = 0
+                        // to_end = 1
+                        (to_begin, to_end, to_end)
+                    } else {
+                        // keep end interval to overwrite
+                        (
+                            to_begin,
+                            to_end.min(self.0.len() - 1),
+                            if to_end != self.0.len() {
+                                to_begin
+                            } else {
+                                to_end.min(self.0.len() - 1)
+                            },
+                        )
+                    }
+                };
+                let drained_amount: u64 =
+                    self.0[to_begin..to_end].iter().map(|f| f.run_len()).sum();
+                let end_amount_interval =
+                    if conces_end { self.0[to_end].start - 1 } else { interval.end };
+                let amount =
+                    Interval::new(interval.start, end_amount_interval).run_len() - drained_amount;
+                let end_interval = if conces_end { self.0[to_end].end } else { interval.end };
+
+                self.0[interval_id].end = end_interval;
+                if !consec_begin {
+                    self.0[interval_id].start = interval.start;
+                }
+                self.0.drain(drain_id_begin..drain_id_end);
+                amount
+            }
+        }
+        // let start = *range.start();
+        // let end = *range.end();
+        // let mut count: u64 = 0;
+        // let mut search_end = false;
+        //
+        // for iv in self.0.iter_mut() {
+        //     if !search_end && cmp_index_interval(start, *iv) == Ordering::Equal {
+        //         count += dbg!(Interval::new(iv.end, start)).run_len();
+        //         iv.end = start;
+        //         search_end = true;
+        //     }
+        //
+        //     if search_end {
+        //         // The end bound is non-inclusive therefore we must search for end - 1.
+        //         match cmp_index_interval(end, *iv) {
+        //             Ordering::Less => {
+        //                 // We invalidate the intervals that are contained in
+        //                 // the start and end but doesn't touch the bounds.
+        //                 count += iv.run_len();
+        //                 *iv = Interval::new(u16::MAX, 0);
+        //             }
+        //             Ordering::Equal => {
+        //                 // We shrink this interval by moving the start of it to be
+        //                 // the end bound which is non-inclusive.
+        //                 count += Interval::new(end, iv.start).run_len();
+        //                 iv.start = end;
+        //             }
+        //             Ordering::Greater => break,
+        //         }
+        //     }
+        // }
+        //
+        // // We invalidated the intervals to remove,
+        // // the start is greater than the end.
+        // self.0.retain(|iv| iv.start <= iv.end);
+        // count
+    }
 }
 
 /// This interval is inclusive to end.
@@ -630,4 +843,59 @@ mod tests {
             IntervalStore(alloc::vec![Interval { start: 50, end: u16::MAX - 1 },])
         );
     }
+
+    #[test]
+    fn remove_range_exact_one() {
+        let mut interval_store = IntervalStore(alloc::vec![Interval { start: 40, end: 60 },]);
+        assert_eq!(interval_store.remove_range(40..=60), 21);
+        assert_eq!(
+            interval_store,
+            IntervalStore(alloc::vec![])
+        );
+    }
+
+    #[test]
+    fn remove_range_exact_many() {
+        let mut interval_store = IntervalStore(alloc::vec![
+            Interval { start: 40, end: 60 },
+            Interval { start: 80, end: 90 },
+            Interval { start: 100, end: 200 },
+        ]);
+        assert_eq!(
+            interval_store.remove_range(40..=200),
+            Interval::new(40, 60).run_len() + Interval::new(80, 90).run_len() + Interval::new(100, 200).run_len()
+        );
+        assert_eq!(
+            interval_store,
+            IntervalStore(alloc::vec![])
+        );
+    }
+
+    #[test]
+    fn remove_range_begin_exact_overlap_end_one() {
+        let mut interval_store = IntervalStore(alloc::vec![
+            Interval { start: 40, end: 60 },
+            Interval { start: 70, end: 90 },
+        ]);
+        assert_eq!(
+            interval_store.remove_range(40..=80),
+            Interval::new(40, 60).run_len() + Interval::new(70, 80).run_len()
+        );
+        assert_eq!(
+            interval_store,
+            IntervalStore(alloc::vec![
+                Interval { start: 81, end: 90 },
+            ])
+        );
+    }
+
+    // #[test]
+    // fn remove_range_end() {
+    //     let mut interval_store = IntervalStore(alloc::vec![Interval { start: 40, end: 60 },]);
+    //     assert_eq!(interval_store.remove_range(50..=60), 11);
+    //     assert_eq!(
+    //         interval_store,
+    //         IntervalStore(alloc::vec![Interval { start: 40, end: 49 },])
+    //     );
+    // }
 }
