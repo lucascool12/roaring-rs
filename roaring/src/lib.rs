@@ -30,6 +30,8 @@ pub mod bitmap;
 /// A compressed bitmap with u64 values.  Implemented as a `BTreeMap` of `RoaringBitmap`s.
 pub mod treemap;
 
+pub mod artmap;
+
 pub use bitmap::RoaringBitmap;
 pub use treemap::RoaringTreemap;
 
