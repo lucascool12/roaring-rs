@@ -19,7 +19,11 @@ license = "MIT OR Apache-2.0"
 bytemuck = { workspace = true, optional = true }
 byteorder = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
-blart = { git = "https://github.com/declanvk/blart", rev = "f07a7576a2e41d2e2e58abf07a28b9380a554622" }
+
+[dependencies.blart]
+git = "https://github.com/lucascool12/blart.git"
+rev = "9c6c3699cdc3e3602a3227654acd362661c23b29"
+default-features = false
 
 [features]
 default = ["std"]
