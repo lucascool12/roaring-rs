@@ -20,10 +20,12 @@ license = "MIT OR Apache-2.0"
 bytemuck = { workspace = true, optional = true }
 byteorder = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
+rayon = { path = "../../rayon/", optional = true }
 
 [features]
-default = ["std"]
+default = ["std", "rayon"]
 serde = ["dep:serde", "std"]
+rayon = ["dep:rayon", "std"]
 simd = []
 std = ["dep:bytemuck", "dep:byteorder"]
 

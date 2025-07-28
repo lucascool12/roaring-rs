@@ -1,6 +1,8 @@
 use core::mem;
-use core::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Sub, SubAssign};
+use core::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, ControlFlow, Sub, SubAssign};
 
+use crate::bitmap::cmp::ParallelPairs;
+use rayon::prelude::*;
 use crate::bitmap::container::Container;
 use crate::bitmap::Pairs;
 use crate::RoaringBitmap;
@@ -405,19 +407,51 @@ impl BitXor<&RoaringBitmap> for &RoaringBitmap {
 impl BitXorAssign<RoaringBitmap> for RoaringBitmap {
     /// A `symmetric difference` between two sets.
     fn bitxor_assign(&mut self, rhs: RoaringBitmap) {
-        for pair in Pairs::new(mem::take(&mut self.containers), rhs.containers) {
-            match pair {
+        // SplitPairs::new(mem::take(&mut self.containers).into_iter(), rhs.containers.iter())
+        //     .for_each(|f| ());
+        // for pair in Pairs::new(mem::take(&mut self.containers), rhs.containers) {
+        //     match pair {
+        //         (Some(mut lhs), Some(rhs)) => {
+        //             BitXorAssign::bitxor_assign(&mut lhs, rhs);
+        //             if !lhs.is_empty() {
+        //                 self.containers.push(lhs);
+        //             }
+        //         }
+        //         (Some(lhs), None) => self.containers.push(lhs),
+        //         (None, Some(rhs)) => self.containers.push(rhs),
+        //         (None, None) => break,
+        //     }
+        // }
+        // todo!()
+        // self.containers = ParallelPairs::new(mem::take(&mut self.containers), rhs.containers)
+        self.containers = Pairs::new(mem::take(&mut self.containers), rhs.containers)
+            .filter_map(|pair| match pair {
                 (Some(mut lhs), Some(rhs)) => {
                     BitXorAssign::bitxor_assign(&mut lhs, rhs);
                     if !lhs.is_empty() {
-                        self.containers.push(lhs);
+                        Some(lhs)
+                    } else {
+                        None
                     }
                 }
-                (Some(lhs), None) => self.containers.push(lhs),
-                (None, Some(rhs)) => self.containers.push(rhs),
-                (None, None) => break,
-            }
-        }
+                (Some(lhs), None) => Some(lhs),
+                (None, Some(rhs)) => Some(rhs),
+                (None, None) => None,
+            })
+            .collect();
+        // for pair in Pairs::new(mem::take(&mut self.containers), rhs.containers) {
+        //     match pair {
+        //         (Some(mut lhs), Some(rhs)) => {
+        //             BitXorAssign::bitxor_assign(&mut lhs, rhs);
+        //             if !lhs.is_empty() {
+        //                 self.containers.push(lhs);
+        //             }
+        //         }
+        //         (Some(lhs), None) => self.containers.push(lhs),
+        //         (None, Some(rhs)) => self.containers.push(rhs),
+        //         (None, None) => break,
+        //     }
+        // }
     }
 }
 

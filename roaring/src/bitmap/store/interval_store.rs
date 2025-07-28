@@ -624,7 +624,7 @@ impl<'a> IntoIterator for &'a IntervalStore {
     }
 }
 
-pub(crate) trait SliceIterator<I>: Iterator + DoubleEndedIterator {
+pub(crate) trait SliceIterator<I>: Iterator + DoubleEndedIterator + ExactSizeIterator {
     fn as_slice(&self) -> &[I];
 }
 
@@ -637,6 +637,12 @@ impl<I> SliceIterator<I> for alloc::vec::IntoIter<I> {
 impl<'a, I> SliceIterator<I> for core::slice::Iter<'a, I> {
     fn as_slice(&self) -> &'a [I] {
         core::slice::Iter::as_slice(self)
+    }
+}
+
+impl<'a, I> SliceIterator<I> for core::slice::IterMut<'a, I> {
+    fn as_slice(&self) -> &[I] {
+        core::slice::IterMut::as_slice(self)
     }
 }
 

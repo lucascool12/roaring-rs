@@ -15,7 +15,7 @@ use self::Store::{Array, Bitmap, Run};
 pub(crate) use self::array_store::ArrayStore;
 pub use self::bitmap_store::{BitmapIter, BitmapStore};
 pub(crate) use self::interval_store::Interval;
-pub(crate) use interval_store::{IntervalStore, RunIterBorrowed, RunIterOwned};
+pub(crate) use interval_store::{IntervalStore, RunIterBorrowed, RunIterOwned, SliceIterator};
 #[cfg(feature = "std")]
 pub(crate) use interval_store::{RUN_ELEMENT_BYTES, RUN_NUM_BYTES};
 
