@@ -1,10 +1,9 @@
 use core::borrow::Borrow;
 use core::cmp::Ordering;
-use core::iter::{FusedIterator, Peekable};
+use core::iter::FusedIterator;
 use core::marker::PhantomData;
-use core::slice;
 
-use rayon::iter::plumbing::{bridge, bridge_unindexed, Consumer, Producer, ProducerCallback, UnindexedProducer, UnindexedConsumer};
+use rayon::iter::plumbing::{bridge_unindexed, Producer, UnindexedProducer, UnindexedConsumer};
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use rayon::vec::{SliceDrain, DrainProducer, Drain};
 use rayon::slice::{IterProducer, IterMutProducer};
@@ -322,7 +321,7 @@ where
     right: J,
 }
 
-const MAX_SPLIT_SIZE: usize = 256;
+const MAX_SPLIT_SIZE: usize = 512;
 
 impl<I, J, L, R> UnindexedProducer for ParPairsProducer<I, J, L, R>
 where
@@ -348,9 +347,16 @@ where
             (true, left_slice.len()/2)
         };
         if split_on_left {
-            let (left_left, left_right) = self.left.split_at(split_point);
-            let biggest = left_left.as_slice().last().unwrap().key;
+            let biggest = left_slice[split_point - 1].key;
             let right_split_point = right_slice.partition_point(|f| f.key <= biggest);
+            if right_split_point >= right_slice.len() {
+                // There is no overlap left, don't even bother splitting
+                return (Self {
+                    left: self.left,
+                    right: self.right,
+                }, None);
+            }
+            let (left_left, left_right) = self.left.split_at(split_point);
             let (right_left, right_right) = self.right.split_at(right_split_point);
             (Self {
                 left: left_left,
@@ -360,9 +366,16 @@ where
                 right: right_right,
             }))
         } else {
-            let (right_left, right_right) = self.right.split_at(split_point);
-            let biggest = right_left.as_slice().last().unwrap().key;
+            let biggest = right_slice[split_point - 1].key;
             let left_split_point = left_slice.partition_point(|f| f.key <= biggest);
+            if left_split_point >= left_slice.len() {
+                // There is no overlap left, don't even bother splitting
+                return (Self {
+                    left: self.left,
+                    right: self.right,
+                }, None);
+            }
+            let (right_left, right_right) = self.right.split_at(split_point);
             let (left_left, left_right) = self.left.split_at(left_split_point);
             (Self {
                 left: left_left,

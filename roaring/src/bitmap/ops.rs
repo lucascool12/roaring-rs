@@ -1,5 +1,5 @@
 use core::mem;
-use core::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, ControlFlow, Sub, SubAssign};
+use core::ops::{BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Sub, SubAssign};
 
 use crate::bitmap::cmp::ParallelPairs;
 use rayon::prelude::*;
@@ -423,7 +423,23 @@ impl BitXorAssign<RoaringBitmap> for RoaringBitmap {
         //     }
         // }
         // todo!()
-        // self.containers = ParallelPairs::new(mem::take(&mut self.containers), rhs.containers)
+        if self.containers.len().max(rhs.containers.len()) > 2048 {
+        self.containers = ParallelPairs::new(mem::take(&mut self.containers), rhs.containers)
+            .filter_map(|pair| match pair {
+                (Some(mut lhs), Some(rhs)) => {
+                    BitXorAssign::bitxor_assign(&mut lhs, rhs);
+                    if !lhs.is_empty() {
+                        Some(lhs)
+                    } else {
+                        None
+                    }
+                }
+                (Some(lhs), None) => Some(lhs),
+                (None, Some(rhs)) => Some(rhs),
+                (None, None) => None,
+            })
+            .collect();
+        } else {
         self.containers = Pairs::new(mem::take(&mut self.containers), rhs.containers)
             .filter_map(|pair| match pair {
                 (Some(mut lhs), Some(rhs)) => {
@@ -439,6 +455,7 @@ impl BitXorAssign<RoaringBitmap> for RoaringBitmap {
                 (None, None) => None,
             })
             .collect();
+            }
         // for pair in Pairs::new(mem::take(&mut self.containers), rhs.containers) {
         //     match pair {
         //         (Some(mut lhs), Some(rhs)) => {
