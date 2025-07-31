@@ -1,9 +1,9 @@
-use blart::{TreeMap, map::{self, ForceEntry, ForceOccupied}};
+use blart::{TreeMap, map::{self, PrefixEntry, PrefixOccupied}};
 use container::Container;
 use key::HighKey;
 use core::{iter::Peekable, ops::RangeInclusive};
 
-use crate::RoaringBitmap;
+use crate::{bitmap, RoaringBitmap};
 
 mod container;
 mod key;
@@ -25,6 +25,10 @@ fn split_key(value: u64) -> (u32, u32) {
     (((value >> u64::BITS / 2) as u32), ((value & u64::from(u32::MAX)) as u32))
 }
 
+fn assemble_key_from_parts(high: u32, low: u32) -> u64 {
+    ((high as u64) << u64::BITS/2) | low as u64
+}
+
 impl RoaringArtmap {
     pub fn new() -> Self {
         Self {
@@ -35,11 +39,11 @@ impl RoaringArtmap {
     pub fn insert(&mut self, value: u64) -> bool {
         let (high, low) = split_key(value);
 
-        match self.map.force_entry(HighKey::from(high)) {
+        match self.map.prefix_entry(HighKey::from(high)) {
             // We have reached an inner node, this is only possible with Full containers, as such
             // this value already exists.
-            ForceEntry::Occupied(ForceOccupied::Inner(_)) => false,
-            ForceEntry::Occupied(ForceOccupied::Leaf(mut occupied)) => {
+            PrefixEntry::Occupied(PrefixOccupied::Inner(_)) => false,
+            PrefixEntry::Occupied(PrefixOccupied::Leaf(mut occupied)) => {
                 match occupied.get_mut() {
                     Container::Full => false,
                     Container::Bitmap(bitmap) => {
@@ -51,7 +55,7 @@ impl RoaringArtmap {
                     }
                 }
             },
-            ForceEntry::Vacant(value) => {
+            PrefixEntry::Vacant(value) => {
                 value.insert(
                     Container::Bitmap(RoaringBitmap::from_iter([low]))
                 );
@@ -62,15 +66,15 @@ impl RoaringArtmap {
 
     pub fn remove(&mut self, value: u64) -> bool {
         let (high, low) = split_key(value);
-        let key = match self.map.force_entry(HighKey::from(high)) {
-            ForceEntry::Occupied(ForceOccupied::Inner(inner)) => {
+        let key = match self.map.prefix_entry(HighKey::from(high)) {
+            PrefixEntry::Occupied(PrefixOccupied::Inner(inner)) => {
                 let inner_key = *inner.get_key().unwrap();
                 let mut new = RoaringBitmap::full();
                 new.remove(low);
                 inner.insert(Container::Bitmap(new));
                 inner_key
             }
-            ForceEntry::Occupied(ForceOccupied::Leaf(mut occupied)) => {
+            PrefixEntry::Occupied(PrefixOccupied::Leaf(mut occupied)) => {
                 match occupied.get_mut() {
                     Container::Full => {
                         let mut new = RoaringBitmap::full();
@@ -88,7 +92,7 @@ impl RoaringArtmap {
                     },
                 }
             },
-            ForceEntry::Vacant(_) => return false,
+            PrefixEntry::Vacant(_) => return false,
         };
         true
     }
@@ -107,6 +111,39 @@ impl PartialEq for RoaringArtmap {
             EitherOrBoth::Both(left, right) => left.1 == right.1,
             _ => false,
         })
+    }
+}
+
+pub struct Iter<'a> {
+    art_iter: blart::map::Iter<'a, HighKey, Container, { PREFIX_LEN }>,
+    cur_container: Option<(HighKey, container::Iter<'a>)>,
+}
+
+impl<'a> Iter<'a> {
+    fn new(art_map: &'a RoaringArtmap) -> Self {
+        Self {
+            art_iter: art_map.map.iter(),
+            cur_container: None,
+        }
+    }
+}
+
+impl<'a> Iterator for Iter<'a> {
+    type Item = u64;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (high_key, cur_iter) = match &mut self.cur_container {
+            Some(value) => {
+                value
+            }
+            value @ None => {
+                let (next_key, next_container) = self.art_iter.next()?;
+                *value = Some((*next_key, next_container.iter()));
+                value.as_mut().unwrap()
+            }
+        };
+        let low_key = cur_iter.next()?;
+        Some(assemble_key_from_parts(high_key.value.get(), low_key))
     }
 }
 

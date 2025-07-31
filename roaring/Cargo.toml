@@ -21,8 +21,8 @@ byteorder = { workspace = true, optional = true }
 serde = { workspace = true, optional = true }
 
 [dependencies.blart]
-git = "https://github.com/lucascool12/blart.git"
-rev = "9c6c3699cdc3e3602a3227654acd362661c23b29"
+git = "https://github.com/declanvk/blart.git"
+rev = "b6f3618f9976e6262d98037ae4c309ddfc538cd5"
 default-features = false
 
 [features]
