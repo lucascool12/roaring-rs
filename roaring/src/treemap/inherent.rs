@@ -440,6 +440,15 @@ impl RoaringTreemap {
 
         None
     }
+
+    /// Run optimizes the tree map.
+    pub fn optimize(&mut self) -> bool {
+        let mut optimized = false;
+        for container in self.map.values_mut() {
+            optimized |= container.optimize();
+        }
+        optimized
+    }
 }
 
 impl Default for RoaringTreemap {
