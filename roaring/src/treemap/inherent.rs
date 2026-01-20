@@ -1,4 +1,5 @@
 use alloc::collections::btree_map::{BTreeMap, Entry};
+use core::cmp::Ordering;
 use core::iter;
 use core::ops::RangeBounds;
 
@@ -270,6 +271,130 @@ impl RoaringTreemap {
             None => false,
             Some(r) => r.contains(lo),
         }
+    }
+
+    /// Returns `true` if all values in the range are present in this set.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use roaring::RoaringTreemap;
+    ///
+    /// let mut rb = RoaringTreemap::new();
+    /// // An empty range is always contained
+    /// assert!(rb.contains_range(7..7));
+    ///
+    /// rb.insert_range(1..0xFFF);
+    /// assert!(rb.contains_range(1..0xFFF));
+    /// assert!(rb.contains_range(2..0xFFF));
+    /// // 0 is not contained
+    /// assert!(!rb.contains_range(0..2));
+    /// // 0xFFF is not contained
+    /// assert!(!rb.contains_range(1..=0xFFF));
+    /// ```
+    #[inline]
+    pub fn contains_range<R>(&self, range: R) -> bool
+    where
+        R: RangeBounds<u64>,
+    {
+        let (start, end) = match util::convert_range_to_inclusive(range) {
+            Some(range) => (*range.start(), *range.end()),
+            // Empty/Invalid ranges are always contained
+            None => return true,
+        };
+        let (start_high, start_low) = util::split(start);
+        let (end_high, end_low) = util::split(end);
+        debug_assert!(start_high <= end_high);
+
+        let mut containers = self.map.range(start_high..=end_high);
+
+        if start_high == end_high {
+            return match containers.next() {
+                Some((_, bitmap)) => bitmap.contains_range(start_low..=end_low),
+                None => false
+            };
+        }
+
+        let high_count = (end_high - start_high) as u64 + 1;
+        // If this contains everything in the range, there should be a container for every item in the span.
+        if containers.clone().fold(0, |count, _| count + 1) != high_count {
+            return false
+        }
+
+        let (_, first) = containers.next().expect("already validated containers has at least 2 items");
+        let (_, last) = containers.next_back().expect("already validated containers has at least 2 items");
+        first.contains_range(start_low..=u32::MAX)
+            && containers.all(|(_, container)| container.is_full())
+            && last.contains_range(0..=end_low)
+    }
+
+    /// Returns the number of elements in this set which are in the passed range.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use roaring::RoaringTreemap;
+    ///
+    /// let mut rb = RoaringTreemap::new();
+    /// rb.insert_range(0x10000..0x40000);
+    /// rb.insert(0x50001);
+    /// rb.insert(0x50005);
+    /// rb.insert(u32::MAX);
+    ///
+    /// assert_eq!(rb.range_cardinality(0..0x10000), 0);
+    /// assert_eq!(rb.range_cardinality(0x10000..0x40000), 0x30000);
+    /// assert_eq!(rb.range_cardinality(0x50000..0x60000), 2);
+    /// assert_eq!(rb.range_cardinality(0x10000..0x10000), 0);
+    /// assert_eq!(rb.range_cardinality(0x50000..=u64::MAX), 3);
+    /// ```
+    #[inline]
+    pub fn range_cardinality<R>(&self, range: R) -> u128
+    where
+        R: RangeBounds<u64>,
+    {
+        let (start, end) = match util::convert_range_to_inclusive(range) {
+            Some(range) => (*range.start(), *range.end()),
+            // Empty/invalid ranges have 0 bits set in them
+            None => return 0,
+        };
+
+        let (start_key, start_low) = util::split(start);
+        let (end_key, end_low) = util::split(end);
+
+        let mut cardinality: u128 = 0;
+
+
+        let mut bitmaps = self.map.range(start_key..=end_key);
+        if let Some((key, first_bitmap)) = bitmaps.next() {
+            match key.cmp(&start_key) {
+                Ordering::Less => unreachable!(),
+                Ordering::Equal => {
+                    if start_key == end_key {
+                        cardinality += u128::from(first_bitmap.rank(end_low));
+                    } else {
+                        cardinality += u128::from(first_bitmap.len());
+                    }
+                    if start_low != 0 {
+                        cardinality -= u128::from(first_bitmap.rank(start_low - 1));
+                    }
+                }
+                Ordering::Greater => cardinality += u128::from(first_bitmap.len()),
+            }
+        }
+        for (key, rest) in bitmaps {
+            match key.cmp(&end_key) {
+                Ordering::Less => cardinality += u128::from(rest.len()),
+                Ordering::Equal => {
+                    cardinality += u128::from(rest.rank(end_low));
+                    break;
+                }
+                Ordering::Greater => {
+                    break;
+                }
+            }
+        }
+
+        cardinality
     }
 
     /// Clears all integers in this set.
